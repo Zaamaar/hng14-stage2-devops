@@ -1,0 +1,359 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: localhost:5000
+  SHA: ${{ github.sha }}
+  REDIS_PASSWORD: test_password_123
+
+jobs:
+  lint:
+    name: Lint Stage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install flake8
+        run: pip install flake8
+      
+      - name: Lint Python (API)
+        run: flake8 api/main.py --max-line-length=120 --ignore=E501,W503
+      
+      - name: Lint Python (Worker)
+        run: flake8 worker/worker.py --max-line-length=120 --ignore=E501,W503
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install eslint
+        run: npm install -g eslint
+      
+      - name: Lint JavaScript
+        run: eslint frontend/app.js --no-eslintrc --env node --parser-options=ecmaVersion:2020
+      
+      - name: Run hadolint on Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: api/Dockerfile
+      
+      - name: Run hadolint on worker Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: worker/Dockerfile
+      
+      - name: Run hadolint on frontend Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/Dockerfile
+
+  test:
+    name: Test Stage
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install pytest pytest-cov pytest-asyncio
+          pip install fastapi uvicorn redis
+          pip install fakeredis
+      
+      - name: Create test directory
+        run: mkdir -p tests
+      
+      - name: Create test file
+        run: |
+          cat > tests/test_api.py << 'PYTEST'
+import pytest
+from fastapi.testclient import TestClient
+from unittest.mock import Mock, patch
+import sys
+sys.path.append('api')
+from main import app
+
+client = TestClient(app)
+
+def test_create_job():
+    with patch('main.r') as mock_redis:
+        mock_redis.lpush.return_value = 1
+        mock_redis.hset.return_value = 1
+        response = client.post("/api/jobs")
+        assert response.status_code == 200
+        assert "job_id" in response.json()
+
+def test_get_job_found():
+    with patch('main.r') as mock_redis:
+        mock_redis.hget.return_value = "completed"
+        response = client.get("/api/jobs/test-123")
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+
+def test_get_job_not_found():
+    with patch('main.r') as mock_redis:
+        mock_redis.hget.return_value = None
+        response = client.get("/api/jobs/not-exist")
+        assert response.status_code == 404
+
+def test_health_check():
+    with patch('main.r') as mock_redis:
+        mock_redis.ping.return_value = True
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        assert response.json()["status"] == "healthy"
+PYTEST
+      
+      - name: Run tests with coverage
+        run: |
+          cd .
+          pytest tests/test_api.py -v --cov=. --cov-report=xml --cov-report=term
+      
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  build:
+    name: Build Stage
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Start local Docker registry
+        run: |
+          docker run -d -p 5000:5000 --name registry registry:2
+      
+      - name: Build API image
+        run: |
+          docker build -t ${{ env.REGISTRY }}/api:${{ env.SHA }} -t ${{ env.REGISTRY }}/api:latest ./api
+          docker push ${{ env.REGISTRY }}/api:${{ env.SHA }}
+          docker push ${{ env.REGISTRY }}/api:latest
+      
+      - name: Build Worker image
+        run: |
+          docker build -t ${{ env.REGISTRY }}/worker:${{ env.SHA }} -t ${{ env.REGISTRY }}/worker:latest ./worker
+          docker push ${{ env.REGISTRY }}/worker:${{ env.SHA }}
+          docker push ${{ env.REGISTRY }}/worker:latest
+      
+      - name: Build Frontend image
+        run: |
+          docker build -t ${{ env.REGISTRY }}/frontend:${{ env.SHA }} -t ${{ env.REGISTRY }}/frontend:latest ./frontend
+          docker push ${{ env.REGISTRY }}/frontend:${{ env.SHA }}
+          docker push ${{ env.REGISTRY }}/frontend:latest
+
+  security-scan:
+    name: Security Scan Stage
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Trivy on API image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/api:${{ env.SHA }}
+          format: 'sarif'
+          output: 'trivy-api.sarif'
+          severity: 'CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+      
+      - name: Run Trivy on Worker image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/worker:${{ env.SHA }}
+          format: 'sarif'
+          output: 'trivy-worker.sarif'
+          severity: 'CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+      
+      - name: Run Trivy on Frontend image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/frontend:${{ env.SHA }}
+          format: 'sarif'
+          output: 'trivy-frontend.sarif'
+          severity: 'CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: true
+      
+      - name: Upload Trivy results
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-security-scans
+          path: '*.sarif'
+
+  integration-test:
+    name: Integration Test Stage
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Create .env file
+        run: |
+          echo "REDIS_PASSWORD=${{ env.REDIS_PASSWORD }}" > .env
+          echo "APP_ENV=test" >> .env
+      
+      - name: Start all services
+        run: |
+          docker-compose -f docker-compose.yml up -d
+          sleep 15
+      
+      - name: Run integration test
+        run: |
+          cat > test_integration.py << 'TEST'
+import requests
+import time
+import sys
+
+print("Testing API health...")
+response = requests.get("http://localhost:8000/api/health")
+assert response.status_code == 200
+print("✅ API health check passed")
+
+print("Testing frontend...")
+response = requests.get("http://localhost:3001")
+assert response.status_code == 200
+print("✅ Frontend is accessible")
+
+print("Creating test job...")
+response = requests.post("http://localhost:8000/api/jobs")
+assert response.status_code == 200
+job_id = response.json()["job_id"]
+print(f"✅ Job created: {job_id}")
+
+print("Waiting for job to complete...")
+for attempt in range(30):
+    response = requests.get(f"http://localhost:8000/api/jobs/{job_id}")
+    status = response.json().get("status")
+    print(f"  Attempt {attempt + 1}: Status = {status}")
+    if status == "completed":
+        print("✅ Job completed successfully")
+        break
+    time.sleep(2)
+else:
+    print("❌ Job did not complete")
+    sys.exit(1)
+
+print("\n🎉 All integration tests passed!")
+TEST
+          python3 test_integration.py
+      
+      - name: Tear down stack
+        if: always()
+        run: |
+          docker-compose down -v
+      
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-logs
+          path: |
+            docker-compose logs
+            test_integration.py
+
+  deploy:
+    name: Deploy Stage
+    runs-on: ubuntu-latest
+    needs: integration-test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Pull new images
+        run: |
+          docker pull ${{ env.REGISTRY }}/api:${{ env.SHA }}
+          docker pull ${{ env.REGISTRY }}/worker:${{ env.SHA }}
+          docker pull ${{ env.REGISTRY }}/frontend:${{ env.SHA }}
+      
+      - name: Rolling update - API
+        run: |
+          docker run -d --name api-new \
+            --network hng14_app_network \
+            -p 8000:8000 \
+            ${{ env.REGISTRY }}/api:${{ env.SHA }}
+          
+          for i in {1..60}; do
+            if curl -s http://localhost:8000/api/health | grep -q "healthy"; then
+              echo "New API container is healthy"
+              docker stop api-old 2>/dev/null || true
+              docker rm api-old 2>/dev/null || true
+              docker rename api-new api-current
+              exit 0
+            fi
+            echo "Waiting for API health check... ($i/60)"
+            sleep 1
+          done
+          
+          echo "ERROR: New API container failed health check"
+          docker logs api-new --tail 50
+          docker stop api-new
+          docker rm api-new
+          exit 1
+      
+      - name: Rolling update - Worker
+        run: |
+          docker run -d --name worker-new \
+            --network hng14_app_network \
+            ${{ env.REGISTRY }}/worker:${{ env.SHA }}
+          
+          sleep 10
+          docker stop worker-old 2>/dev/null || true
+          docker rm worker-old 2>/dev/null || true
+          docker rename worker-new worker-current
+      
+      - name: Rolling update - Frontend
+        run: |
+          docker run -d --name frontend-new \
+            --network hng14_app_network \
+            -p 3001:3000 \
+            ${{ env.REGISTRY }}/frontend:${{ env.SHA }}
+          
+          for i in {1..60}; do
+            if curl -s http://localhost:3001 | grep -q "Job"; then
+              echo "New frontend container is healthy"
+              docker stop frontend-old 2>/dev/null || true
+              docker rm frontend-old 2>/dev/null || true
+              docker rename frontend-new frontend-current
+              exit 0
+            fi
+            echo "Waiting for frontend health check... ($i/60)"
+            sleep 1
+          done
+          
+          echo "ERROR: New frontend container failed health check"
+          docker logs frontend-new --tail 50
+          docker stop frontend-new
+          docker rm frontend-new
+          exit 1

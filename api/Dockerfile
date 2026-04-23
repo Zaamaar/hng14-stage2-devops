@@ -7,8 +7,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
 
-# Install curl for healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+# Install curl for healthcheck with pinned version
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl=7.88.1-10+deb12u8 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -18,7 +19,7 @@ RUN addgroup --system --gid 1001 appgroup && \
 
 WORKDIR /app
 
-# Copy installed packages from builder
+# Copy dependencies from builder
 COPY --from=builder --chown=appuser:appgroup /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder --chown=appuser:appgroup /usr/local/bin /usr/local/bin
 

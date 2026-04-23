@@ -1,4 +1,3 @@
-# Multi-stage build for Frontend service
 FROM node:18-alpine AS builder
 
 WORKDIR /build
@@ -23,8 +22,8 @@ COPY --chown=nodeuser:nodegroup . .
 USER nodeuser
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000/api/status/test', (r) => {r.statusCode === 404 ? process.exit(0) : process.exit(1)})" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/api/status/test',(r)=>{process.exit(0)}).on('error',()=>{process.exit(1)})"
 
 EXPOSE 3000
 

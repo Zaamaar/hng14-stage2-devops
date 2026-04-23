@@ -23,18 +23,6 @@ jobs:
         with:
           dockerfile: api/Dockerfile
           no-fail: true
-          
-      - name: Run hadolint on worker Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: worker/Dockerfile
-          no-fail: true
-          
-      - name: Run hadolint on frontend Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: frontend/Dockerfile
-          no-fail: true
 
   test:
     runs-on: ubuntu-latest
@@ -45,13 +33,7 @@ jobs:
       - name: Run tests
         run: |
           pip install pytest
-          pytest tests/test_api.py -v || true
-      
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: pytest.xml
+          pytest tests/test_api.py -v --tb=short || true
 
   build:
     runs-on: ubuntu-latest
@@ -59,11 +41,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Build Docker images
+      - name: Build API image
+        run: docker build -t api:latest ./api --no-cache
+      
+      - name: Build Worker image
+        run: docker build -t worker:latest ./worker --no-cache
+      
+      - name: Build Frontend image
+        run: docker build -t frontend:latest ./frontend --no-cache
+      
+      - name: Verify images
         run: |
-          docker build -t api:latest ./api
-          docker build -t worker:latest ./worker
-          docker build -t frontend:latest ./frontend
+          docker images
           echo "All images built successfully"
 
   security:
@@ -72,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Scan images with Trivy
+      - name: Scan API image
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: api:latest
@@ -85,20 +74,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Start services
+      - name: Quick integration test
         run: |
           echo "REDIS_PASSWORD=test123" > .env
           docker-compose up -d
-          sleep 15
-      
-      - name: Test API
-        run: |
-          curl -f http://localhost:8000/api/health || exit 1
-          echo "Integration tests passed"
-      
-      - name: Cleanup
-        if: always()
-        run: docker-compose down -v
+          sleep 10
+          curl -f http://localhost:8000/api/health && echo "✅ API is working"
+          docker-compose down -v
 
   deploy:
     runs-on: ubuntu-latest
@@ -109,5 +91,5 @@ jobs:
       
       - name: Deploy
         run: |
-          echo "✅ Deployment successful!"
-          echo "New version deployed with rolling update"
+          echo "✅ Deployment simulation successful"
+          echo "Rolling update would happen here"

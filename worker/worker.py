@@ -65,7 +65,7 @@ for attempt in range(max_retries):
         print("Connected to Redis successfully")
         break
     except redis.ConnectionError as e:
-        print(f"Redis not ready, retrying ({attempt+1}/{max_retries})... Error: {e}")
+        print(f"Redis not ready, retrying ({attempt + 1}/{max_retries})... Error: {e}")
         time.sleep(3)
 else:
     print("Failed to connect to Redis after max retries")

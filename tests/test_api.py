@@ -1,126 +1,86 @@
 import sys
 import os
+from unittest.mock import patch, MagicMock
 
-# Add the api directory to Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'api'))
+# -------------------------------------------------------
+# We must patch redis.Redis BEFORE importing main.py
+# because main.py calls get_redis_connection() at import
+# time and will sys.exit(1) if Redis is not available.
+# -------------------------------------------------------
 
-import pytest
-from unittest.mock import patch, Mock
+mock_redis_instance = MagicMock()
+mock_redis_instance.ping.return_value = True
+mock_redis_instance.lpush.return_value = 1
+mock_redis_instance.hset.return_value = True
+mock_redis_instance.hget.return_value = "queued"
 
-# Import from api directory
-try:
-    # Change to api directory to import
-    import api.main as main_module
-    from api.main import app
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
-    HAS_FASTAPI = True
-except ImportError as e:
-    print(f"Warning: FastAPI not available - {e}")
-    HAS_FASTAPI = False
-    
-    # Create mock client for testing without FastAPI
-    class MockTestClient:
-        def post(self, *args, **kwargs):
-            class MockResponse:
-                status_code = 200
-                def json(self):
-                    return {"job_id": "mock-job-id"}
-            return MockResponse()
-        
-        def get(self, *args, **kwargs):
-            class MockResponse:
-                status_code = 200
-                def json(self):
-                    if "health" in str(args):
-                        return {"status": "healthy"}
-                    return {"status": "completed", "job_id": "mock-job-id"}
-            return MockResponse()
-    
-    client = MockTestClient()
+with patch('redis.Redis', return_value=mock_redis_instance):
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
+    import main as main_module
+    from main import app
 
-@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not available")
-def test_create_job():
-    """Test job creation endpoint"""
-    with patch('api.main.r') as mock_redis:
-        mock_redis.lpush.return_value = 1
-        mock_redis.hset.return_value = 1
-        
-        response = client.post("/api/jobs")
-        
-        assert response.status_code == 200
-        assert "job_id" in response.json()
+from fastapi.testclient import TestClient
 
-@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not available")
-def test_get_job_found():
-    """Test getting existing job"""
-    with patch('api.main.r') as mock_redis:
-        mock_redis.hget.return_value = "completed"
-        
-        response = client.get("/api/jobs/test-123")
-        
-        assert response.status_code == 200
-        assert response.json().get("status") == "completed"
+client = TestClient(app)
 
-@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not available")
-def test_get_job_not_found():
-    """Test getting non-existent job"""
-    with patch('api.main.r') as mock_redis:
-        mock_redis.hget.return_value = None
-        
-        response = client.get("/api/jobs/not-exist")
-        
-        assert response.status_code == 404
 
-@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not available")
+# -------------------------------------------------------
+# TEST 1 — health check returns 200 and healthy status
+# -------------------------------------------------------
 def test_health_check():
-    """Test health check endpoint"""
-    with patch('api.main.r') as mock_redis:
-        mock_redis.ping.return_value = True
-        
-        response = client.get("/api/health")
-        
+    """Health check endpoint must return 200 with status healthy."""
+    mock_redis_instance.ping.return_value = True
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("status") == "healthy"
+
+
+# -------------------------------------------------------
+# TEST 2 — creating a job returns a job_id
+# -------------------------------------------------------
+def test_create_job_returns_id():
+    """POST /api/jobs must return a job_id."""
+    mock_redis_instance.lpush.return_value = 1
+    mock_redis_instance.hset.return_value = True
+    response = client.post("/api/jobs")
+    assert response.status_code == 200
+    data = response.json()
+    assert "job_id" in data
+    assert len(data["job_id"]) > 0
+
+
+# -------------------------------------------------------
+# TEST 3 — getting a job that exists returns its status
+# -------------------------------------------------------
+def test_get_existing_job():
+    """GET /api/jobs/{id} must return status for a known job."""
+    mock_redis_instance.hget.return_value = "queued"
+    response = client.get("/api/jobs/test-job-123")
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("status") == "queued"
+    assert data.get("job_id") == "test-job-123"
+
+
+# -------------------------------------------------------
+# TEST 4 — getting a job that does not exist returns 404
+# -------------------------------------------------------
+def test_get_missing_job_returns_404():
+    """GET /api/jobs/{id} must return 404 when job does not exist."""
+    mock_redis_instance.hget.return_value = None
+    response = client.get("/api/jobs/does-not-exist")
+    assert response.status_code == 404
+
+
+# -------------------------------------------------------
+# TEST 5 — job status progresses correctly (mock side_effect)
+# -------------------------------------------------------
+def test_job_status_progression():
+    """Job status should reflect whatever Redis returns."""
+    mock_redis_instance.hget.side_effect = ["queued", "processing", "completed"]
+    for expected in ["queued", "processing", "completed"]:
+        response = client.get("/api/jobs/some-job-id")
         assert response.status_code == 200
-        assert response.json().get("status") == "healthy"
-
-@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not available")
-def test_job_status_flow():
-    """Test complete job flow"""
-    with patch('api.main.r') as mock_redis:
-        mock_redis.lpush.return_value = 1
-        mock_redis.hset.return_value = 1
-        mock_redis.hget.side_effect = ["queued", "processing", "completed"]
-        
-        # Create job
-        create_response = client.post("/api/jobs")
-        job_id = create_response.json().get("job_id", "test-123")
-        
-        # Check statuses
-        response = client.get(f"/api/jobs/{job_id}")
-        assert response.json().get("status") in ["queued", "processing", "completed"]
-
-@pytest.mark.skipif(not HAS_FASTAPI, reason="FastAPI not available")
-def test_multiple_jobs():
-    """Test creating multiple jobs"""
-    with patch('api.main.r') as mock_redis:
-        mock_redis.lpush.return_value = 1
-        mock_redis.hset.return_value = 1
-        
-        job_ids = []
-        for i in range(3):
-            response = client.post("/api/jobs")
-            assert response.status_code == 200
-            job_ids.append(response.json().get("job_id", f"job-{i}"))
-        
-        assert len(job_ids) == 3
-
-# Simple tests that always pass (for CI/CD)
-def test_simple():
-    """Simple test that always passes"""
-    assert True
-
-def test_python_version():
-    """Test Python is available"""
-    import sys
-    assert sys.version_info.major >= 3
+        assert response.json().get("status") == expected
+    mock_redis_instance.hget.side_effect = None

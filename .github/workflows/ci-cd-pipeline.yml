@@ -71,7 +71,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install test dependencies
-        run: pip install pytest pytest-cov pytest-mock fakeredis httpx fastapi
+        run: pip install pytest pytest-cov pytest-mock fakeredis httpx fastapi python-dotenv redis
 
       - name: Run unit tests with coverage
         run: |

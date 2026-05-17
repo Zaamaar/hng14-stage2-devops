@@ -204,7 +204,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"type":"test","payload":{"message":"integration-check"}}')
           echo "Job response: $JOB_RESPONSE"
-          JOB_ID=$(echo $JOB_RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          JOB_ID=$(echo $JOB_RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
           echo "JOB_ID=$JOB_ID" >> $GITHUB_ENV
 
       - name: Poll until job completes

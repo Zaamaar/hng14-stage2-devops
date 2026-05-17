@@ -41,23 +41,11 @@ jobs:
       - name: Lint JavaScript
         run: cd frontend && npx eslint . --max-warnings=0
 
-      - name: Lint Dockerfile - API
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: api/Dockerfile
-          ignore: DL3008 DL3009
-
-      - name: Lint Dockerfile - Worker
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: worker/Dockerfile
-          ignore: DL3008 DL3009
-
-      - name: Lint Dockerfile - Frontend
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: frontend/Dockerfile
-          ignore: DL3008 DL3009
+      - name: Lint Dockerfiles
+        run: |
+          docker run --rm -i hadolint/hadolint:latest-debian             hadolint --ignore DL3008 --ignore DL3009 - < api/Dockerfile
+          docker run --rm -i hadolint/hadolint:latest-debian             hadolint --ignore DL3008 --ignore DL3009 - < worker/Dockerfile
+          docker run --rm -i hadolint/hadolint:latest-debian             hadolint --ignore DL3008 --ignore DL3009 - < frontend/Dockerfile
 
   # -----------------------------------------
   # STAGE 2: TEST

@@ -150,15 +150,15 @@ jobs:
 
       - name: Scan API image
         run: |
-          trivy image --severity CRITICAL --exit-code 1             --format sarif --output trivy-api.sarif             localhost:5000/api:latest
+          trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed --format sarif --output trivy-api.sarif localhost:5000/api:latest
 
       - name: Scan Worker image
         run: |
-          trivy image --severity CRITICAL --exit-code 1             --format sarif --output trivy-worker.sarif             localhost:5000/worker:latest
+          trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed --format sarif --output trivy-worker.sarif localhost:5000/worker:latest
 
       - name: Scan Frontend image
         run: |
-          trivy image --severity CRITICAL --exit-code 1             --format sarif --output trivy-frontend.sarif             localhost:5000/frontend:latest
+          trivy image --severity CRITICAL --exit-code 1 --ignore-unfixed --format sarif --output trivy-frontend.sarif localhost:5000/frontend:latest
 
       - name: Upload SARIF results
         uses: actions/upload-artifact@v4

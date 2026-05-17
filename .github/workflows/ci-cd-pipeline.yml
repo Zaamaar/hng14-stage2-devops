@@ -45,16 +45,19 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: api/Dockerfile
+          config: .hadolint.yaml
 
       - name: Lint Dockerfile - Worker
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: worker/Dockerfile
+          config: .hadolint.yaml
 
       - name: Lint Dockerfile - Frontend
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: frontend/Dockerfile
+          config: .hadolint.yaml
 
   # -----------------------------------------
   # STAGE 2: TEST

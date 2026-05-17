@@ -138,6 +138,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
+
       - name: Rebuild images for scanning
         run: |
           docker build -t localhost:5000/api:latest ./api
@@ -145,31 +149,16 @@ jobs:
           docker build -t localhost:5000/frontend:latest ./frontend
 
       - name: Scan API image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: localhost:5000/api:latest
-          severity: CRITICAL
-          exit-code: '1'
-          format: sarif
-          output: trivy-api.sarif
+        run: |
+          trivy image --severity CRITICAL --exit-code 1             --format sarif --output trivy-api.sarif             localhost:5000/api:latest
 
       - name: Scan Worker image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: localhost:5000/worker:latest
-          severity: CRITICAL
-          exit-code: '1'
-          format: sarif
-          output: trivy-worker.sarif
+        run: |
+          trivy image --severity CRITICAL --exit-code 1             --format sarif --output trivy-worker.sarif             localhost:5000/worker:latest
 
       - name: Scan Frontend image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: localhost:5000/frontend:latest
-          severity: CRITICAL
-          exit-code: '1'
-          format: sarif
-          output: trivy-frontend.sarif
+        run: |
+          trivy image --severity CRITICAL --exit-code 1             --format sarif --output trivy-frontend.sarif             localhost:5000/frontend:latest
 
       - name: Upload SARIF results
         uses: actions/upload-artifact@v4
